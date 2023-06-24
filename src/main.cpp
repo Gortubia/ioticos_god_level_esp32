@@ -8,18 +8,30 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
+//Incluir las bibliotecas max6675
+#include "max6675.h"
 
-String dId = "121212";
-String webhook_pass = "SA7sxAKDVR";
-String webhook_endpoint = "http://192.168.0.6:3001/api/getdevicecredentials";
-const char *mqtt_server = "192.168.0.6";
+String dId = "01-01-02";
+String webhook_pass = "IopsIVKSvZ"; 
+String webhook_endpoint = "http://192.168.1.24:3001/api/getdevicecredentials";
+const char *mqtt_server = "192.168.1.24";
 
 //PINS
-#define led 2
+#define led CONFIG_BLINK_GPIO
+#define ifserial true
+
+//Selecciona el pin al que se conecta el sensor de temperatura
+int MISO_th = 19;//Miso 19
+int CS_th = 5; //CSO 5
+int SCLK_th = 18;//CLK18
+
+//Comunicar que vamos a utilizar la interfaz max6675
+MAX6675 thermocouple(SCLK_th, CS_th, MISO_th);
 
 //WiFi
-const char *wifi_ssid = "GOLD2";
-const char *wifi_password = "Tesla208";
+const char *wifi_ssid = "Casa_23";
+const char *wifi_password = "puelche2021";
+
 
 //Functions definitions
 bool get_mqtt_credentials();
@@ -49,12 +61,14 @@ DynamicJsonDocument mqtt_data_doc(2048);
 void setup()
 {
 
+  if(ifserial){
   Serial.begin(921600);
-  pinMode(led, OUTPUT);
   clear();
-
+  }
+  pinMode(led, OUTPUT);
+  if(ifserial){
   Serial.print(underlinePurple + "\n\n\nWiFi Connection in Progress" + fontReset + Purple);
-
+  }
   WiFi.begin(wifi_ssid, wifi_password);
 
   int counter = 0;
@@ -62,19 +76,24 @@ void setup()
   while (WiFi.status() != WL_CONNECTED)
   {
     delay(500);
+    if(ifserial){
     Serial.print(".");
+    }
     counter++;
 
     if (counter > 10)
     {
+      if(ifserial){
       Serial.print("  ⤵" + fontReset);
       Serial.print(Red + "\n\n         Ups WiFi Connection Failed :( ");
       Serial.println(" -> Restarting..." + fontReset);
+      }
       delay(2000);
       ESP.restart();
     }
   }
 
+  if(ifserial){
   Serial.print("  ⤵" + fontReset);
 
   //Printing local ip
@@ -83,14 +102,27 @@ void setup()
   Serial.print(boldBlue);
   Serial.print(WiFi.localIP());
   Serial.println(fontReset);
+  }
 
   client.setCallback(callback);
+  //on start LED
+  for (size_t i = 0; i < 4; i++)
+  {
+    /* led ON/OFF start esp32 */
+     digitalWrite(led, HIGH);
+     delay(200);
+     digitalWrite(led, LOW);
+     delay(200);
+  }
+  
+
 
 }
 
 void loop()
 {
   check_mqtt_connection();
+
   
 }
 
@@ -99,28 +131,29 @@ void loop()
 //USER FUNTIONS ⤵
 void process_sensors()
 {
-
-  //get temp simulation
-  int temp = random(1, 100);
-  mqtt_data_doc["variables"][0]["last"]["value"] = temp;
+  //Leer la temperatura
+  float temperatureC = thermocouple.readCelsius(); 
+  mqtt_data_doc["variables"][0]["last"]["value"] = temperatureC;
 
   //save temp?
-  int dif = temp - prev_temp;
+  int dif = (int)temperatureC - prev_temp;
+
   if (dif < 0)
   {
     dif *= -1;
   }
 
-  if (dif >= 40)
+  if (dif >= 2)
   {
     mqtt_data_doc["variables"][0]["last"]["save"] = 1;
+     prev_temp = (int)temperatureC;
   }
   else
   {
-    mqtt_data_doc["variables"][0]["last"]["save"] = 0;
+    mqtt_data_doc["variables"][0]["last"]["save"] = 1;
   }
 
-  prev_temp = temp;
+
 
   //get humidity simulation
   int hum = random(1, 50);
@@ -150,18 +183,34 @@ void process_sensors()
 
 void process_actuators()
 {
-  if (mqtt_data_doc["variables"][2]["last"]["value"] == "true")
+  
+  //Serial.println(Red + "process_actuators:");
+  //Serial.println(Red + "variable 0--> ");
+  String str_dat1 = mqtt_data_doc["variables"][1]["last"]["value"];
+  //Serial.println(str_dat0);
+
+  if (str_dat1 == "true")
   {
     digitalWrite(led, HIGH);
-    mqtt_data_doc["variables"][2]["last"]["value"] = "";
+    mqtt_data_doc["variables"][1]["last"]["value"] = "";
     varsLastSend[4] = 0;
+    if(ifserial){
+    Serial.print(Green + "\n\n   value true ");
+    }
+    digitalWrite(led, HIGH);
   }
-  else if (mqtt_data_doc["variables"][3]["last"]["value"] == "false")
+  else if (str_dat1 == "false")
   {
     digitalWrite(led, LOW);
-    mqtt_data_doc["variables"][3]["last"]["value"] = "";
+    mqtt_data_doc["variables"][1]["last"]["value"] = "";
     varsLastSend[4] = 0;
+    if(ifserial){
+    Serial.print(Red + "\n\n   value false ");
+    }
+    digitalWrite(led, LOW);
   }
+
+
 
 }
 
@@ -256,33 +305,43 @@ bool reconnect()
 
   if (!get_mqtt_credentials())
   {
+    if(ifserial){
     Serial.println(boldRed + "\n\n      Error getting mqtt credentials :( \n\n RESTARTING IN 10 SECONDS");
     Serial.println(fontReset);
+    }
     delay(10000);
     ESP.restart();
+    return false;
   }
 
   //Setting up Mqtt Server
   client.setServer(mqtt_server, 1883);
-
-  Serial.print(underlinePurple + "\n\n\nTrying MQTT Connection" + fontReset + Purple + "  ⤵");
-
+  if(ifserial){
+  Serial.print(underlinePurple + "\n\n\nTrying MQTT Connection" + fontReset + Purple + " :");
+  }
   String str_client_id = "device_" + dId + "_" + random(1, 9999);
   const char *username = mqtt_data_doc["username"];
   const char *password = mqtt_data_doc["password"];
   String str_topic = mqtt_data_doc["topic"];
 
   if (client.connect(str_client_id.c_str(), username, password))
-  {
+  { 
+    if(ifserial){
     Serial.print(boldGreen + "\n\n         Mqtt Client Connected :) " + fontReset);
+    }
     delay(2000);
-
+    
     client.subscribe((str_topic + "+/actdata").c_str());
+    return true;
   }
   else
   {
+    if(ifserial){
     Serial.print(boldRed + "\n\n         Mqtt Client Connection Failed :( " + fontReset);
+    }
+    return false;
   }
+  
 }
 
 void check_mqtt_connection()
@@ -290,8 +349,10 @@ void check_mqtt_connection()
 
   if (WiFi.status() != WL_CONNECTED)
   {
+    if(ifserial){
     Serial.print(Red + "\n\n         Ups WiFi Connection Failed :( ");
     Serial.println(" -> Restarting..." + fontReset);
+    }
     delay(15000);
     ESP.restart();
   }
@@ -315,6 +376,7 @@ void check_mqtt_connection()
     client.loop();
     process_sensors();
     send_data_to_broker();
+
     print_stats();
   }
 }
@@ -322,7 +384,9 @@ void check_mqtt_connection()
 bool get_mqtt_credentials()
 {
 
-  Serial.print(underlinePurple + "\n\n\nGetting MQTT Credentials from WebHook" + fontReset + Purple + "  ⤵");
+  if(ifserial){
+  Serial.print(underlinePurple + "\n\n\nGetting MQTT Credentials from WebHook" + fontReset + Purple + " : ");
+  }
   delay(1000);
 
   String toSend = "dId=" + dId + "&password=" + webhook_pass;
@@ -334,15 +398,19 @@ bool get_mqtt_credentials()
   int response_code = http.POST(toSend);
 
   if (response_code < 0)
-  {
+  { 
+    if(ifserial){
     Serial.print(boldRed + "\n\n         Error Sending Post Request :( " + fontReset);
+    }
     http.end();
     return false;
   }
 
   if (response_code != 200)
   {
+    if(ifserial){
     Serial.print(boldRed + "\n\n         Error in response :(   e-> " + fontReset + " " + response_code);
+    }
     http.end();
     return false;
   }
@@ -350,9 +418,9 @@ bool get_mqtt_credentials()
   if (response_code == 200)
   {
     String responseBody = http.getString();
-
+    if(ifserial){
     Serial.print(boldGreen + "\n\n         Mqtt Credentials Obtained Successfully :) " + fontReset);
-
+    }
     deserializeJson(mqtt_data_doc, responseBody);
     http.end();
     delay(1000);
@@ -378,16 +446,17 @@ void print_stats()
   if (now - lastStats > 2000)
   {
     lastStats = millis();
+    if(ifserial){
     clear();
 
-    Serial.print("\n");
-    Serial.print(Purple + "\n╔══════════════════════════╗" + fontReset);
-    Serial.print(Purple + "\n║       SYSTEM STATS       ║" + fontReset);
-    Serial.print(Purple + "\n╚══════════════════════════╝" + fontReset);
+    Serial.println(" ");
+    Serial.println(Purple + "╔══════════════════════════╗" + fontReset);
+    Serial.println(Purple + "║       SYSTEM STATS       ║" + fontReset);
+    Serial.println(Purple + "╚══════════════════════════╝" + fontReset);
     Serial.print("\n\n");
     Serial.print("\n\n");
 
-    Serial.print(boldCyan + "#" + " \t Name" + " \t\t Var" + " \t\t Type" + " \t\t Count" + " \t\t Last V" + fontReset + "\n\n");
+    Serial.println(boldCyan + "#" + " \t Name" + " \t\t Var" + " \t\t Type" + " \t\t Count" + " \t\t Last V" + fontReset);
 
     for (int i = 0; i < mqtt_data_doc["variables"].size(); i++)
     {
@@ -401,8 +470,11 @@ void print_stats()
       Serial.println(String(i) + " \t " + variableFullName.substring(0,5) + " \t\t " + variable.substring(0,10) + " \t " + variableType.substring(0,5) + " \t\t " + String(counter).substring(0,10) + " \t\t " + lastMsg);
     }
 
-    Serial.print(boldGreen + "\n\n Free RAM -> " + fontReset + ESP.getFreeHeap() + " Bytes");
+    Serial.println(boldGreen + "Free RAM -> " + fontReset + ESP.getFreeHeap() + " Bytes");
 
-    Serial.print(boldGreen + "\n\n Last Incomming Msg -> " + fontReset + last_received_msg);
+    Serial.println(boldGreen + "Last Incomming Msg -> " + fontReset + last_received_msg);
+    }
   }
 }
+
+
