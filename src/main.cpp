@@ -29,8 +29,8 @@ int SCLK_th = 18;//CLK18
 MAX6675 thermocouple(SCLK_th, CS_th, MISO_th);
 
 //WiFi
-const char *wifi_ssid = "Casa_23";
-const char *wifi_password = "puelche2021";
+const char *wifi_ssid = wifi";
+const char *wifi_password = "3021";
 
 
 //Functions definitions
